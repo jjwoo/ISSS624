@@ -1,0 +1,283 @@
+---
+title: "Hands-on_Ex2"
+editor: visual
+author: Jia Jian
+date: 24 November 2023
+---
+
+# Spatial Weights and Applications
+
+------------------------------------------------------------------------
+
+## Overview
+
+In this hands-on exercise, I will learn how to compute spatial weights using R.
+
+The following packages will be used:
+
+-   import geospatial data using appropriate functions of *sf* package
+
+-   import csv file using appropriate function of *readr* package
+
+-   perform relational join using appropriate join function of *dplyr* package
+
+-   compute spatial weights using appropriate functions of *spdep* package
+
+-   calculate spatially lagged variables using appropriate functions *spdep packge*
+
+## The Study Area and Data
+
+The data sets that will be used are as below:
+
+-   Hunan county boundary layer: This is a geospatial data set in ESRI shapefile format.
+
+-   Hunan_2012.csv: This csv file contains selected Hunan's local development indicators in 2012.
+
+### Getting Started
+
+Ensure that **spdep**, **sf**, **tmap**, **tidyverse** and **knitr** packages are installed.
+
+```{r}
+pacman::p_load(sf, spdep, tmap, tidyverse, knitr)
+```
+
+## Getting the Data into R environment
+
+In this section, I will learn how to bring a geospatial data and its associated attribute table into R. The geospatial data is in ESRI shapefile format and attribute table is in csv format.
+
+### Import shapefile into R environment
+
+The code below uses *st_read()* of **sf** package to import Hunan shapefile into R. The imported shapefile will be **simple features** object of **sf**.
+
+```{r}
+hunan = st_read(dsn = "data/geospatial", layer = "Hunan") 
+```
+
+### Import csv file into R environment
+
+The code below will import *Hunan_2012.csv* into R by using *read_csv()* of **readr** package, and output is R data frame class.
+
+```{r}
+hunan2012 = read.csv("data/aspatial/Hunan_2012.csv")
+```
+
+### Performing relational join
+
+The code below will be used to update the attribute table of *hunan*'s SpatialPolygonsDataFrame with the attribute fields of *hunan2012* data frame, by using *left_join()* of **dplyr** package.
+
+```{r}
+hunan = left_join(hunan,hunan2012)%>%
+  select(1:4,7,15)
+```
+
+## Visualizing Regional Development Indicator
+
+We will prepare a basemap and choropleth map showing the distribution of GDPPC 2012 by using *qtm()* of **tmap** package.
+
+```{r}
+basemap = tm_shape(hunan)+tm_polygons()+tm_text("NAME_3",size=0.5)
+
+gdppc = qtm(hunan, "GDPPC")
+tmap_arrange(basemap,gdppc,asp=1,ncol=2)
+```
+
+## Computing Contiguity Spatial Weights
+
+In this section, I will learn how to use *poly2nb()* of **spdep** package to compute contiguity weight matrices for the study area. This function builds a neighbours list based on regions with contiguous boundaries. If you look at the documentation, you can pass a "queen" argument that takes TRUE or FALSE as options. By default this argument is set to TRUE, which means the function will return a list of first order neighbours using Queen criteria.
+
+### Computing (Queen) contiguity based neighbours
+
+The code below computes Queen contiguity weight matrix.
+
+```{r}
+wm_q = poly2nb(hunan, queen=TRUE)
+summary(wm_q)
+```
+
+The output shows that there are 88 area units in Hunan. The most connected area unit has 11 neighbours, and there are two area units with only one neighbour.
+
+For each polygon in our polygon object, *wm_q* lists all neighbouring polygons. For example, to see neighbours for first polygon in object, type:
+
+```{r}
+wm_q[[1]]
+```
+
+Polygon 1 has 5 neighbours. The numbers show the polygon IDs as stored in hunan SpatialPolygonsDataFrame class.
+
+We can retrieve the county name of polygon ID = 1 by typing:
+
+```{r}
+hunan$County[1]
+```
+
+Output shows that polygon ID=1 is Anxiang county.
+
+To show the county names of the 5 neighbouring polygons, we type:
+
+```{r}
+hunan$NAME_3[c(2,3,4,57,85)]
+```
+
+We retrieve the GDPPC of these 5 counties by typing:
+
+```{r}
+nb1 = wm_q[[1]]
+nb1 = hunan$GDPPC[nb1]
+nb1
+```
+
+The output shows the GDPPC of the 5 nearest neighbours based on Queen's method.
+
+To display the complete weight matrix, use *str()*
+
+```{r}
+str(wm_q)
+```
+
+### Creating (ROOK) contiguity based neighbours
+
+The code below computes Rook contiguity weight matrix
+
+```{r}
+wm_r = poly2nb(hunan, queen = FALSE)
+summary(wm_r)
+```
+
+The output shows the link number distribution, where the most connected area has 10 neighbours and there are two area units with only one neighbour.
+
+### Visualizing contiguity weights
+
+Connectivity graph takes a point and then displays a line to each neighbouring point. Currently we are working with polygons so we need to get points in order to make connectivity graphs. The most typical method is polygon centroids. We will calculate these in the **sf** package before moving to the graphs.
+
+As mentioned, we need points to associate with each polygon before making the connectivity graph. This will be more complicated than just running *st_centroid* on the **sf** object: us.bound. We need the coordinates in a separate data frame. To do this, we use a mapping function. This applies a given function to each element of a vector and returns a vector of the same length. Our input vector will be the geometry column of us.bound. Our function will be *st_centroid*. We will be using map_dbl variation of map from the **purrr** package.
+
+To get our longitude values we map the *st_centroid* function over the geometry column of us.bound and access the longitude value through double bracket notation \[\[\]\] and 1. This allows us to get only the longitude, which is the first value in each centroid.
+
+```{r}
+longitude = map_dbl(hunan$geometry, ~st_centroid(.x)[[1]])
+```
+
+We do the same for latitude, with one key difference being that we access the second value per centroid using \[\[2\]\]
+
+```{r}
+latitude = map_dbl(hunan$geometry, ~st_centroid(.x)[[2]])
+```
+
+With longitude and latitude, we now use *cbind* to put longitude and latitude into the same object.
+
+```{r}
+coords = cbind(longitude,latitude)
+```
+
+Check the first few obs to see if things are formatted properly.
+
+```{r}
+head(coords)
+```
+
+#### Plotting Queen contiguity based neighbours map
+
+```{r}
+plot(hunan$geometry, border = "lightgrey")
+plot(wm_q,coords,pch=19,cex=0.6,add = TRUE, col = "red")
+```
+
+#### Plotting Rook contiguity based neighbours map
+
+```{r}
+plot(hunan$geometry, border = "lightgrey")
+plot(wm_r,coords, pch=19,cex=0.6,add = TRUE, col = "red")
+```
+
+#### Plotting both Queen and Rook contiguity based neighbours maps
+
+```{r}
+par(mfrow=c(1,2))
+plot(hunan$geometry, border="lightgrey", main="Queen Contiguity")
+plot(wm_q, coords, pch = 19, cex = 0.6, add = TRUE, col= "red")
+plot(hunan$geometry, border="lightgrey", main="Rook Contiguity")
+plot(wm_r, coords, pch = 19, cex = 0.6, add = TRUE, col = "red")
+```
+
+## Computing distance based neighbours
+
+In this section, I will learn how to derive distance-based weight matrices by using [*dnearneigh()*](https://r-spatial.github.io/spdep/reference/dnearneigh.html) of **spdep** package.
+
+The function identifies neighbours of region points by Euclidean distance with a distance band with lower d1= and upper d2= bounds controlled by bounds= argument. If unprojected coordinates are used and either specified in the coordinates object x or with x as a two-column matrix and longlat=TRUE, great circle distances in **km** will be calculated assuming the WGS84 reference ellipsoid.
+
+### Determine the cut-off distance
+
+Firstly, we need to determine the upper limit for distance band by using the below steps:
+
+-   Return a matrix with indices of points belonging to the set of k nearest neighbours of each other using the [*knearneigh()*](https://r-spatial.github.io/spdep/reference/knearneigh.html) of **spdep**
+
+-   Convert the knn object returned by *knearneigh()* into a neighbours list of class nb with a list of integer vectors containing neighbour region number ids by using [*knn2nb()*](https://r-spatial.github.io/spdep/reference/knn2nb.html)
+
+-   Return the length of neighbour relationship edges by using [*nbdists()*](https://r-spatial.github.io/spdep/reference/nbdists.html) of **spdep**. The function returns in the units of the coordinates if the coordinates are projected, in km otherwise.
+
+-   Remove the list of structure of the returned object by using [*unlist()*](https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/unlist)
+
+```{r}
+#coords = coordinates(hunan)
+k1 = knn2nb(knearneigh(coords))
+k1dists = unlist(nbdists(k1, coords, longlat = TRUE))
+summary(k1dists)
+```
+
+The summary report shows that the largest first nearest neighbour distance is 61.79km, so using this as upper threshold gives certainty that all units will have at least one neighbour.
+
+### Computing fixed distance weight matrix
+
+Now, we will compute the distance weight matrix by using *dnearneigh()* as shown below:
+
+```{r}
+wm_d62 = dnearneigh(coords, 0, 62, longlat = TRUE)
+wm_d62
+```
+
+| Learning Info: The average number of links (eg. 3.681818) refers to the average number of links per area unit, which is obtained by getting the total number of links by distribution, before dividing by total number of area units.
+
+Next, we will use *str()* to display the content of wm_d62 weight matrix.
+
+```{r}
+str(wm_d62)
+```
+
+Another way to display the structure of weight matrix is to combine [*table()*](https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/table)and [*card()*](https://r-spatial.github.io/spdep/reference/card.html) of **spdep**.
+
+```{r}
+table(hunan$County, card(wm_d62))
+```
+
+```{r}
+n_comp = n.comp.nb(wm_d62)
+n_comp$nc
+```
+
+| *n.comp.nb* reports the number of graph components and the components to which points belong.
+
+```{r}
+table(n_comp$comp.id)
+```
+
+#### Plotting fixed distance weight matrix
+
+Next, we will plot the distance weight matrix by using the code below.
+
+```{r}
+plot(hunan$geometry, border="lightgrey")
+plot(wm_d62, coords, add=TRUE)
+plot(k1, coords, add=TRUE, col="red", length=0.08)
+```
+
+The red lines show the links of 1st nearest neighbours and the black lines show the links of neighbours within the cut-off distance of 62km.
+
+Alternatively, we can plot both of them next to each other by using the code below:
+
+```{r}
+par(mfrow=c(1,2))
+plot(hunan$geometry, border="lightgrey", main="1st nearest neighbours")
+plot(k1, coords, add=TRUE, col="red", length=0.08)
+plot(hunan$geometry, border="lightgrey", main="Distance link")
+plot(wm_d62, coords, add=TRUE, pch = 19, cex = 0.6)
+```
