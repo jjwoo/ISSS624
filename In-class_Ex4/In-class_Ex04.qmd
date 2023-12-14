@@ -1,0 +1,252 @@
+---
+title: "In-class Ex 4"
+editor: visual
+date: "Published on December 9 2023"
+execute: 
+  warning: false
+---
+
+## Overview
+
+A well calibrated Spatial Interaction Model needs conceptually logical and well prepared propulsiveness and attractiveness variables. In this in-class exercise, I will gain hands-on experience on preparing propulsiveness and attractiveness variables for calibrating spatial interaction models, and will be able to:
+
+-   perform geocoding by using SLA OneMap API,
+
+-   convert aspatial data into a simple feature tibble data.frame,
+
+-   perform point-in-polygon count analysis, and
+
+-   append the propulsiveness and attractiveness variables into a flow data.
+
+## Getting Started
+
+To get started, the following R packages will be loaded into R environment:
+
+```{r}
+pacman::p_load(tidyverse, sf, httr, tmap, performance, ggpubr)
+```
+
+## **Counting number of schools in each URA Planning Subzone**
+
+### **Downloading General information of schools data from data.gov.sg**
+
+To get started, I downloaded *General information of schools* data set of School Directory and Information from [data.gov.sg](https://beta.data.gov.sg/).
+
+### **Geocoding using SLA API**
+
+Address geocoding, or geocoding, is the process of taking an aspatial description of a location, such as an address or postcode, and returning geographic coordinates, frequently latitude/longitude pair, to identify a location on the Earth's surface.
+
+Singapore Land Authority (SLA) supports an online geocoding service called [OneMap API](https://www.onemap.gov.sg/apidocs/). The [Search](https://www.onemap.gov.sg/apidocs/apidocs) API looks up the address data or 6-digit postal code for an entered value. It then returns both latitude, longitude and x,y coordinates of the searched location.
+
+The code chunks below will perform geocoding using [SLA OneMap API](https://www.onemap.gov.sg/docs/#onemap-rest-apis). The input data is in csv file format. It will be read into R Studio environment using *read_csv* function of **readr** package. A collection of http call functions of **httr** package of R will then be used to pass the individual records to the geocoding server at OneMap.
+
+Two tibble data.frames will be created if the geocoding process is completed successfully. They are called `found` and `not_found`. `found` contains all records that are geocoded correctly and `not_found` contains postal that failed to be geocoded.
+
+Lastly, the found data table will joined with the initial csv data table by using a unique identifier (i.e. POSTAL) common to both data tables. The output data table will then be called `found`.
+
+```{r}
+url <- "https://www.onemap.gov.sg/api/common/elastic/search"
+
+csv <- read_csv("data/aspatial/Generalinformationofschools.csv")
+postcodes <- csv$postal_code
+
+found <- data.frame()
+not_found <- data.frame()
+
+for(postcode in postcodes){
+  query <- list(searchVal = postcode,
+                'returnGeom' = 'Y',
+                'getAddrDetails' = 'Y',
+                'pageNum' = '1')
+  
+  res <- GET(url, query = query)
+  
+  if((content(res)$found)!=0) {
+    found <- rbind(found, data.frame(content(res))[4:13])
+  } else{
+    not_found = data.frame(postcode)
+  }
+}
+```
+
+Next, the code chunk below will be used to combine both `found` and `csv` data.frames into a single tibble data.frame called `merged`. At the same time, we will write `merged` and `not_found` tibble data.frames into two separate csv files called `schools` and `not_found` respectively.
+
+```{r}
+#| eval: false
+merged <- merge(csv, found, 
+                by.x = "postal_code",
+                by.y = "results.POSTAL",
+                all = TRUE)
+
+write_csv(merged, file = "data/aspatial/schools.csv")
+write_csv(not_found, file = "data/aspatial/not_found.csv")
+```
+
+> For the ungeocoded school, we can manually find the longitude and latitude values via Google map and update in `schools.csv`
+
+### **Tidying schools data.frame**
+
+In this sub-section, we will import `schools.csv` into R environment and at the same time tidy up the data by selecting only the necessary fields as well as rename some fields.
+
+```{r}
+schools <- read_csv("data/aspatial/schools.csv")
+```
+
+```{r}
+schools <- schools %>%
+  rename(
+    latitude = results.LATITUDE,
+    longitude = results.LONGITUDE
+  ) %>%
+  select(
+    postal_code,
+    school_name,
+    latitude,
+    longitude
+  )
+```
+
+### **Converting an aspatial data into sf tibble data.frame**
+
+Next, I will convert `schools` tibble data.frame data into a simple feature tibble data.frame called `schools_sf` by using values in latitude and longitude fields.
+
+Refer to [st_as_sf()](https://r-spatial.github.io/sf/reference/st_as_sf.html) of sf package.
+
+```{r}
+schools_sf <- st_as_sf(schools,
+                       coords = c("longitude", "latitude"),
+   # geocoding returns long & lat data projected in WGS84 form, with CRS 4326
+   # This portion is required for st_as_sf to parse the lon/lat information
+                       crs = 4326) %>%
+              st_transform(crs = 3414)
+
+schools_sf
+```
+
+> crs = 4326 is important to let *st_as_af* recognize wgs84
+
+### **Plotting a point simple feature layer**
+
+To ensure that `schools` sf tibble data.frame has been projected and converted correctly, we can plot the schools point data for visual inspection.
+
+```{r}
+tmap_mode("view")
+
+tm_shape(schools_sf) +
+  tm_dots() +
+  tm_view(set.zoom.limits = c(11,14))
+```
+
+Let us import `MPSZ-2019` shapefile into R environment and save it as an sf tibble data.frame called `mpsz`.
+
+```{r}
+mpsz <- st_read(dsn = "data/geospatial",
+                layer = "MPSZ-2019") %>%
+          st_transform(crs = 3414)
+```
+
+### **Performing point-in-polygon count process**
+
+Next, we will count the number of schools located inside the planning subzones.
+
+```{r}
+mpsz$SCHOOL_COUNT <- lengths(
+  st_intersects(
+    mpsz, schools_sf)
+)
+```
+
+We will examine the summary statistics of the derived variable to check
+
+```{r}
+summary(mpsz$SCHOOL_COUNT)
+```
+
+> The summary statistics above reveals that there are excessive 0 values in SCHOOL_COUNT field. If `log()` is to transform this field, additional step is required to ensure that all 0 will be replaced with a value between 0 and 1 but not 0 or 1.
+
+## **Data Integration and Final Touch-up**
+
+Below code chunk counts the number of business points in each planning subzone.
+
+```{r}
+business <- st_read(dsn = "data/geospatial",
+                    layer = "Business") %>%
+          st_transform(crs = 3414)
+```
+
+```{r}
+tmap_mode("plot")
+
+tmap_options(check.and.fix = TRUE)
+tm_shape(mpsz) +
+  tm_polygons() +
+tm_shape(business) +
+  tm_dots()
+```
+
+```{r}
+mpsz$`BUSINESS_COUNT`= lengths(
+  st_intersects(
+    mpsz, business))
+```
+
+```{r}
+summary(mpsz$BUSINESS_COUNT)
+```
+
+```{r}
+flow_data = read_rds("data/flow_data_tidy.rds")
+head(flow_data)
+```
+
+Notice that this is a sf tibble dataframe and the features are polylines linking the centroid of origins and destinations planning subzone.
+
+Now, we will append SCHOOL_COUNT and BUSINESS_COUNT into `flow_data` sf tibble data.frame.
+
+```{r}
+mpsz_tidy = mpsz %>%
+  st_drop_geometry() %>%
+  select(SUBZONE_C, SCHOOL_COUNT, BUSINESS_COUNT)
+```
+
+Then we will append SCHOOL_COUNT and BUSINESS_COUNT fields from `mpsz_tidy` data.frame into `flow_data` sf tibble data.frame by using the code chunk below.
+
+```{r}
+flow_data = flow_data %>%
+  left_join(mpsz_tidy,
+            by = c("DESTIN_SZ" = "SUBZONE_C")) %>%
+  rename(TRIPS = MORNING_PEAK,
+         DIST = dist)
+```
+
+### **Checking for variables with zero values**
+
+Since Poisson Regression is based on log and log 0 is undefined, it is important to ensure that there is no "0" value in the explanatory variables.
+
+In the code chunk below, summary() of Base R is used to compute the summary statistics of all variables in `wd_od` data frame.
+
+```{r}
+summary(flow_data)
+```
+
+```{r}
+flow_data = flow_data %>%
+  rename(SCHOOL_COUNT = SCHOOL_COUNT.y)
+```
+
+The print report above reveals that variables SCHOOL_COUNT and BUSINESS_COUNT consist of "0" values.
+
+In view of this, code chunk below will be used to replace "0" to 0.99.
+
+```{r}
+flow_data$SCHOOL_COUNT = ifelse(
+  flow_data$SCHOOL_COUNT == 0,
+  0.99, flow_data$SCHOOL_COUNT)
+flow_data$BUSINESS_COUNT = ifelse(
+  flow_data$BUSINESS_COUNT == 0,
+  0.99, flow_data$BUSINESS_COUNT)
+```
+
+```{r}
+summary(flow_data)
+```

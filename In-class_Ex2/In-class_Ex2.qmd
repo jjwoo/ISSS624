@@ -1,0 +1,49 @@
+---
+title: "In-Class Exercise 2"
+editor: visual
+---
+
+## Overview
+
+```{r}
+pacman::p_load(sf, sfdep, tmap, tidyverse, knitr)
+```
+
+```{r}
+hunan = st_read(dsn = "data/geospatial",
+           layer = "Hunan")
+```
+
+```{r}
+hunan2012 = read_csv("data/aspatial/Hunan_2012.csv")
+```
+
+```{r}
+hunan_GDPPC = left_join(hunan, hunan2012) %>%
+  select(1:4, 7, 15)
+```
+
+| For the above, the *left_join* is executed first before the selection of columns is done.
+| Also ensure the *sf* table is the one on the left.
+
+### Deriving Contiguity Weights: Queen's method
+
+```{r}
+wm_q = hunan_GDPPC %>%
+  mutate(nb = st_contiguity(geometry),
+         wt = st_weights(nb,
+                         style = "W"),
+         .before = 1)
+```
+
+`st_weights()` provides three arguments:
+
+-   *nb*: A neighbour list object is created by *st_neighbors()*
+
+-   *style*: Default "W" for row standardized weights. This value can also be "B", "C", "U", "minimax" and "S". "B" is the basic binary coding, TO BE CONTINUED...
+
+**Computing local morans**
+
+For computing local moran, need to choose to use median or mean, depending on the distribution of data.. (how sia)
+
+for unnest, this is needed because is list.
