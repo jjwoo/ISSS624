@@ -495,18 +495,19 @@ bs_count$finserv_ct = lengths(st_intersects(bs_count,finserv))
 The first aspatial dataset to be imported is a csv file that contains locations of institutions from kindergartens to Junior Colleges.
 
 ```{r}
+#|eval: false
 sch = read_csv('data/aspatial/Generalinformationofschools.csv')
 ```
 
 There is a need to geocode the schools' locations and we will use [OneMap API](https://www.onemap.gov.sg/apidocs/apidocs/#search) to get the longitude and latitude using the *postal_code* field.
 
 ```{r}
+#|eval: false
 url = 'https://www.onemap.gov.sg/api/common/elastic/search'
 postcodes <- sch$`postal_code`
 
 found = data.frame()
 not_found = data.frame()
-
 
 for(postcode in postcodes) {
   query <- list('searchVal' = postcode, 'returnGeom' = 'Y', 'getAddrDetails' = 'Y', 'pageNum' = '1')
@@ -524,19 +525,21 @@ for(postcode in postcodes) {
 Now we will merge the output with the `sch` table.
 
 ```{r}
+#|eval: false
 merged = merge(sch, found, by.x = 'postal_code' , by.y='results.POSTAL', all=TRUE)
 ```
 
 As there is one school that was not geocoded (Zhenghua Secondary School), I will output `merged` into a csv file and manually add in the longitude and latitude.
 
 ```{r}
+#|eval: false
 write.csv(merged, file = 'data/aspatial/schools_geocoded.csv')
 ```
 
 Then we will reload the updated file.
 
 ```{r}
-sch = read_csv('data/aspatial/schools_geocoded.csv') %>% 
+sch = read_csv('data/aspatial/schools.csv') %>% 
   select(postal_code, school_name, results.LONGITUDE, results.LATITUDE )
 ```
 
@@ -1012,10 +1015,6 @@ log_unc <- ggplot(
     axis.text.y = element_blank(),
     axis.ticks.x = element_blank()
   )
-
-
-
-
 
 log_unc
 ```
